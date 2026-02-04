@@ -1,3 +1,34 @@
+# AndroidX Media fork for Nordic Android Player
+
+This repository is a fork of Google's Media3 (ExoPlayer) repository. Its intention is to be able
+to fix issues which Google has not yet fixed in their Media3 repository or workarounds for our specific streams.
+
+## Changes Applied on Media3 in this Fork
+
+* [TimeLine.getAdGroupMediaItems](https://github.com/TV4/nordic-android-media3v2/commit/b077fe1590cb8b6057c0b3553a1a5227c8736cda) - exposes more data of currently playing ad, for instance ad url
+* [Fix subtitle styles](https://github.com/TV4/nordic-android-media3v2/pull/1)
+
+## How to use this fork
+* Publish new version with the Github action: [Publish GitHub Packages](https://github.com/TV4/nordic-android-media3v2/actions/workflows/publish-github-packages.yml). - use postfix rvX for release versions
+
+* Add the GitHub Packages Maven repository so Gradle can resolve the customized Media3 artifacts. Put this inside repositories (usually in the root build.gradle / settings.gradle for all modules, or in the app module if that’s your setup): 
+```
+maven {
+    url = uri("https://maven.pkg.github.com/TV4/nordic-android-media3v2")
+    credentials {
+        username = providers.gradleProperty("githubPackages.user").orNull ?: System.getenv("GITHUB_ACTOR")
+        password = providers.gradleProperty("githubPackages.token").orNull ?: System.getenv("GITHUB_TOKEN")
+    }
+}
+```
+
+* Then add the dependency as usual, but use the rvX suffix for the forked build:
+```
+dependencies {
+    api("androidx.media3:media3-exoplayer:1.9.1rv1")
+}
+```
+
 # AndroidX Media
 
 AndroidX Media is a collection of libraries for implementing media use cases on
