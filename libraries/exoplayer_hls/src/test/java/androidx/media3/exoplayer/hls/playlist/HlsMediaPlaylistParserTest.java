@@ -525,9 +525,201 @@ public class HlsMediaPlaylistParserTest {
             new HlsPlaylistParser(HlsMultivariantPlaylist.EMPTY, previousPlaylist)
                 .parse(playlistUri, inputStream);
 
-    assertThat(playlist.startTimeUs).isEqualTo(1_577_995_200_000_000L);
+    // One 4.00008s segment after the one with the EXT-X-PROGRAM-DATE-TIME.
+    assertThat(playlist.startTimeUs).isEqualTo(1_577_995_200_000_000L + 4_000_080L);
     assertThat(previousPlaylist.startTimeUs).isEqualTo(1_577_995_200_000_000L);
     assertThat(playlist.segments).hasSize(2);
+  }
+
+  @Test
+  public void
+      parseMediaPlaylist_withSkippedSegmentsAndProgramDateTimeRemoved_keepsAbsoluteSegmentTimes()
+          throws IOException {
+    Uri playlistUri = Uri.parse("https://example.com/test.m3u8");
+    String previousPlaylistString =
+        "#EXTM3U\n"
+            + "#EXT-X-TARGETDURATION:4\n"
+            + "#EXT-X-VERSION:9\n"
+            + "#EXT-X-SERVER-CONTROL:CAN-SKIP-UNTIL=24.0\n"
+            + "#EXT-X-MEDIA-SEQUENCE:100\n"
+            + "#EXT-X-PROGRAM-DATE-TIME:2020-01-02T20:00:00.000Z\n"
+            + "#EXTINF:4.0,\n"
+            + "segment100.mp4\n"
+            + "#EXTINF:3.5,\n"
+            + "segment101.mp4\n"
+            + "#EXTINF:4.0,\n"
+            + "segment102.mp4\n"
+            + "#EXTINF:4.0,\n"
+            + "segment103.mp4\n";
+    // Removes two segments, including the one with the EXT-X-PROGRAM-DATE-TIME, and adds one.
+    String playlistString =
+        "#EXTM3U\n"
+            + "#EXT-X-TARGETDURATION:4\n"
+            + "#EXT-X-VERSION:9\n"
+            + "#EXT-X-SERVER-CONTROL:CAN-SKIP-UNTIL=24.0\n"
+            + "#EXT-X-MEDIA-SEQUENCE:102\n"
+            + "#EXT-X-SKIP:SKIPPED-SEGMENTS=2\n"
+            + "#EXTINF:4.0,\n"
+            + "segment104.mp4\n";
+    HlsMediaPlaylist previousPlaylist =
+        (HlsMediaPlaylist)
+            new HlsPlaylistParser()
+                .parse(
+                    playlistUri,
+                    new ByteArrayInputStream(Util.getUtf8Bytes(previousPlaylistString)));
+
+    HlsMediaPlaylist playlist =
+        (HlsMediaPlaylist)
+            new HlsPlaylistParser(HlsMultivariantPlaylist.EMPTY, previousPlaylist)
+                .parse(playlistUri, new ByteArrayInputStream(Util.getUtf8Bytes(playlistString)));
+
+    assertThat(playlist.hasProgramDateTime).isTrue();
+    assertThat(playlist.startTimeUs).isEqualTo(1_577_995_200_000_000L + 7_500_000L);
+    assertThat(playlist.segments).hasSize(3);
+    // Segments in both playlists keep their start times.
+    assertThat(playlist.startTimeUs + playlist.segments.get(0).relativeStartTimeUs)
+        .isEqualTo(
+            previousPlaylist.startTimeUs + previousPlaylist.segments.get(2).relativeStartTimeUs);
+    assertThat(playlist.startTimeUs + playlist.segments.get(1).relativeStartTimeUs)
+        .isEqualTo(
+            previousPlaylist.startTimeUs + previousPlaylist.segments.get(3).relativeStartTimeUs);
+  }
+
+  @Test
+  public void
+      parseMediaPlaylist_withConsecutiveDeltaUpdatesWithoutProgramDateTime_doesNotAccumulateError()
+          throws IOException {
+    Uri playlistUri = Uri.parse("https://example.com/test.m3u8");
+    HlsMediaPlaylist playlist =
+        (HlsMediaPlaylist)
+            new HlsPlaylistParser()
+                .parse(
+                    playlistUri,
+                    new ByteArrayInputStream(
+                        Util.getUtf8Bytes(
+                            "#EXTM3U\n"
+                                + "#EXT-X-TARGETDURATION:4\n"
+                                + "#EXT-X-VERSION:9\n"
+                                + "#EXT-X-SERVER-CONTROL:CAN-SKIP-UNTIL=24.0\n"
+                                + "#EXT-X-MEDIA-SEQUENCE:100\n"
+                                + "#EXT-X-PROGRAM-DATE-TIME:2020-01-02T20:00:00.000Z\n"
+                                + "#EXTINF:4.0,\n"
+                                + "segment100.mp4\n"
+                                + "#EXTINF:4.0,\n"
+                                + "segment101.mp4\n"
+                                + "#EXTINF:4.0,\n"
+                                + "segment102.mp4\n")));
+
+    // Each delta update removes one segment and adds one.
+    for (int newSegment = 103; newSegment <= 106; newSegment++) {
+      String deltaPlaylistString =
+          "#EXTM3U\n"
+              + "#EXT-X-TARGETDURATION:4\n"
+              + "#EXT-X-VERSION:9\n"
+              + "#EXT-X-SERVER-CONTROL:CAN-SKIP-UNTIL=24.0\n"
+              + "#EXT-X-MEDIA-SEQUENCE:"
+              + (newSegment - 2)
+              + "\n"
+              + "#EXT-X-SKIP:SKIPPED-SEGMENTS=1\n"
+              + "#EXTINF:4.0,\n"
+              + "segment"
+              + (newSegment - 1)
+              + ".mp4\n"
+              + "#EXTINF:4.0,\n"
+              + "segment"
+              + newSegment
+              + ".mp4\n";
+      playlist =
+          (HlsMediaPlaylist)
+              new HlsPlaylistParser(HlsMultivariantPlaylist.EMPTY, playlist)
+                  .parse(
+                      playlistUri,
+                      new ByteArrayInputStream(Util.getUtf8Bytes(deltaPlaylistString)));
+    }
+
+    // segment104 is four 4s segments after the EXT-X-PROGRAM-DATE-TIME.
+    assertThat(playlist.mediaSequence).isEqualTo(104);
+    assertThat(playlist.startTimeUs).isEqualTo(1_577_995_200_000_000L + 16_000_000L);
+  }
+
+  @Test
+  public void
+      parseMediaPlaylist_notOverlappingPreviousPlaylistWithoutProgramDateTime_startTimeUnset()
+          throws IOException {
+    Uri playlistUri = Uri.parse("https://example.com/test.m3u8");
+    String previousPlaylistString =
+        "#EXTM3U\n"
+            + "#EXT-X-TARGETDURATION:4\n"
+            + "#EXT-X-MEDIA-SEQUENCE:100\n"
+            + "#EXT-X-PROGRAM-DATE-TIME:2020-01-02T20:00:00.000Z\n"
+            + "#EXTINF:4.0,\n"
+            + "segment100.mp4\n";
+    String playlistString =
+        "#EXTM3U\n"
+            + "#EXT-X-TARGETDURATION:4\n"
+            + "#EXT-X-MEDIA-SEQUENCE:105\n"
+            + "#EXTINF:4.0,\n"
+            + "segment105.mp4\n";
+    HlsMediaPlaylist previousPlaylist =
+        (HlsMediaPlaylist)
+            new HlsPlaylistParser()
+                .parse(
+                    playlistUri,
+                    new ByteArrayInputStream(Util.getUtf8Bytes(previousPlaylistString)));
+
+    HlsMediaPlaylist playlist =
+        (HlsMediaPlaylist)
+            new HlsPlaylistParser(HlsMultivariantPlaylist.EMPTY, previousPlaylist)
+                .parse(playlistUri, new ByteArrayInputStream(Util.getUtf8Bytes(playlistString)));
+
+    assertThat(playlist.hasProgramDateTime).isFalse();
+    assertThat(playlist.startTimeUs).isEqualTo(0L);
+  }
+
+  @Test
+  public void
+      parseMediaPlaylist_previousPlaylistWithOnlyPartsAndProgramDateTimeRemoved_keepsStartTime()
+          throws IOException {
+    Uri playlistUri = Uri.parse("https://example.com/test.m3u8");
+    // Only parts of the first segment so far.
+    String previousPlaylistString =
+        "#EXTM3U\n"
+            + "#EXT-X-TARGETDURATION:4\n"
+            + "#EXT-X-VERSION:6\n"
+            + "#EXT-X-PART-INF:PART-TARGET=1.0\n"
+            + "#EXT-X-MEDIA-SEQUENCE:100\n"
+            + "#EXT-X-PROGRAM-DATE-TIME:2020-01-02T20:00:00.000Z\n"
+            + "#EXT-X-PART:DURATION=1.0,URI=\"part100.0.mp4\"\n"
+            + "#EXT-X-PART:DURATION=1.0,URI=\"part100.1.mp4\"\n";
+    // The first segment is now complete, without EXT-X-PROGRAM-DATE-TIME.
+    String playlistString =
+        "#EXTM3U\n"
+            + "#EXT-X-TARGETDURATION:4\n"
+            + "#EXT-X-VERSION:6\n"
+            + "#EXT-X-PART-INF:PART-TARGET=1.0\n"
+            + "#EXT-X-MEDIA-SEQUENCE:100\n"
+            + "#EXT-X-PART:DURATION=1.0,URI=\"part100.0.mp4\"\n"
+            + "#EXT-X-PART:DURATION=1.0,URI=\"part100.1.mp4\"\n"
+            + "#EXT-X-PART:DURATION=1.0,URI=\"part100.2.mp4\"\n"
+            + "#EXT-X-PART:DURATION=1.0,URI=\"part100.3.mp4\"\n"
+            + "#EXTINF:4.0,\n"
+            + "segment100.mp4\n"
+            + "#EXT-X-PART:DURATION=1.0,URI=\"part101.0.mp4\"\n";
+    HlsMediaPlaylist previousPlaylist =
+        (HlsMediaPlaylist)
+            new HlsPlaylistParser()
+                .parse(
+                    playlistUri,
+                    new ByteArrayInputStream(Util.getUtf8Bytes(previousPlaylistString)));
+
+    HlsMediaPlaylist playlist =
+        (HlsMediaPlaylist)
+            new HlsPlaylistParser(HlsMultivariantPlaylist.EMPTY, previousPlaylist)
+                .parse(playlistUri, new ByteArrayInputStream(Util.getUtf8Bytes(playlistString)));
+
+    assertThat(previousPlaylist.segments).isEmpty();
+    assertThat(playlist.hasProgramDateTime).isTrue();
+    assertThat(playlist.startTimeUs).isEqualTo(previousPlaylist.startTimeUs);
   }
 
   @Test
