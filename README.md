@@ -6,7 +6,10 @@ Remove the fork again once an upstream release contains them.
 
 ## Changes on top of Media3 1.11.1
 
-None yet.
+* Fix the start time of refreshed HLS live playlists that no longer contain the segment with the
+  `EXT-X-PROGRAM-DATE-TIME`, for example with delta updates
+  ([androidx/media#3067](https://github.com/androidx/media/issues/3067)). Without it, audio and
+  video drift apart during Prism live ads, which freezes the video.
 
 The earlier 1.9.1 fork also had `Timeline.getAdGroupMediaItems` and a subtitle cue fix
 (NPLAY-363). They are not part of this version.
